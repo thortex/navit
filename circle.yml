@@ -24,6 +24,7 @@ dependencies:
     - sudo apt-get install libfreetype6-dev
     - sudo apt-get install libdbus-glib-1-dev
     - sudo apt-get install g++
+    - [ -n "$CIRCLE_BUILD_NUM" ] && echo $(( 5658 + $CIRCLE_BUILD_NUM )) >version-int.txt && git add version-int.txt && git commit --no-edit -m Update version
     - bash ci/import_translations.sh
     - bash ci/build_linux.sh
     - sed -i '/INTEGER/d' bin/po/navit.pot
@@ -70,9 +71,9 @@ test:
     - dbus-send  --print-reply --session --dest=org.navit_project.navit /org/navit_project/navit/default_navit org.navit_project.navit.navit.quit
 deployment:
   merge_into_master:
-    branch: trunk
+    branch: trunk_track_version
     commands:
-      - git push origin $CIRCLE_SHA1:refs/heads/master
+      - git push origin HEAD:refs/heads/master_track_version
   merge_translations:
     branch: /i18n.*/
     owner: navit-gps
