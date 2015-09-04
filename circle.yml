@@ -24,7 +24,7 @@ dependencies:
     - sudo apt-get install libfreetype6-dev
     - sudo apt-get install libdbus-glib-1-dev
     - sudo apt-get install g++
-    - bash ci/update_version.sh
+    - bash ci/update_version.sh prepare
     - bash ci/import_translations.sh
     - bash ci/build_linux.sh
     - sed -i '/INTEGER/d' bin/po/navit.pot
@@ -73,7 +73,7 @@ deployment:
   merge_into_master:
     branch: trunk_track_version
     commands:
-      - git push origin HEAD:refs/heads/master_track_version
+      - bash ci/update_version.sh push
   merge_translations:
     branch: /i18n.*/
     owner: navit-gps
