@@ -8,13 +8,13 @@ if ! git log -n 1 ; then
   exit 1
 fi
 
-if [ "$CIRCLE_BRANCH" != "trunk$SUFFIX"] ; then
+if [ "$CIRCLE_BRANCH" != "trunk$SUFFIX" ] ; then
   exit
 fi
 
 TAG=R$(( 5658 + $CIRCLE_BUILD_NUM ))
 
-if [ git log -1 --format="%H %d" | grep 'tag: R'] ; then
+if [ git log -1 --format="%H %d" | grep 'tag: R' ] ; then
   echo "This commit is already tagged."
   exit
 fi
