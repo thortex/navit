@@ -26,5 +26,6 @@ fi
 
 if [ "$1" == "push" ] ; then
   git push origin $TAG
+  git push origin $CIRCLE_SHA1:refs/heads/master$SUFFIX
 fi
 
