@@ -40,6 +40,7 @@ dependencies:
     - cmake -Dbinding/python:BOOL=FALSE -DSAMPLE_MAP=n -DCMAKE_TOOLCHAIN_FILE=../Toolchain/mingw32.cmake ../ && make && make package:
         pwd: win32/
     - cp win32/*.exe $CIRCLE_ARTIFACTS/
+    - bash ci/build_wince.sh
 # For python testing with junit reporting
     - sudo pip install junit-xml
 #
