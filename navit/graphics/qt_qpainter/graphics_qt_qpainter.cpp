@@ -519,7 +519,11 @@ static void draw_mode(struct graphics_priv *gr, enum draw_mode_num mode)
 				qt_qpainter_draw(gr, &r, 0);
 			}
 		if (!gr->parent)
-			QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents|QEventLoop::ExcludeSocketNotifiers|QEventLoop::DeferredDeletion|QEventLoop::X11ExcludeTimers);
+#if QT_VERSION >= 0x050000
+                    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents|QEventLoop::ExcludeSocketNotifiers|QEventLoop::X11ExcludeTimers);
+#elif QT_VERSION >= 0x040000
+                    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents|QEventLoop::ExcludeSocketNotifiers|QEventLoop::DeferredDeletion|QEventLoop::X11ExcludeTimers);
+#endif
 	}
 	gr->mode=mode;
 }
@@ -578,6 +582,7 @@ static void * get_data(struct graphics_priv *this_, const char *type)
 		QSize size(this_->w,this_->h);
 		this_->widget->do_resize(size);
 	}
+	dbg(lvl_error,"get_data\n");
 	if (!strcmp(type, "qt_widget")) 
 	    return this_->widget;
 	if (!strcmp(type, "qt_pixmap")) 
