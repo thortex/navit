@@ -63,6 +63,9 @@ test:
 # Test the qt_qpainter graphics driver
     - sed -i -e 's@graphics type="gtk_drawing_area"@graphics type="qt_qpainter"@' navit.xml:
         pwd: bin/navit/
+    - ./navit:
+        pwd: bin/navit/
+        background: true
     - sleep 5
     - import -window root $CIRCLE_ARTIFACTS/default.png
     - python ci/dbus_tests.py $CIRCLE_TEST_REPORTS/
