@@ -34,14 +34,13 @@
 #include "android.h"
 #include "command.h"
 
-int dummy;
-
 struct graphics_priv {
 	jclass NavitGraphicsClass;
 	jmethodID NavitGraphics_draw_polyline, NavitGraphics_draw_polygon, NavitGraphics_draw_rectangle, 
 		NavitGraphics_draw_circle, NavitGraphics_draw_text, NavitGraphics_draw_image, 
 		NavitGraphics_draw_image_warp, NavitGraphics_draw_mode, NavitGraphics_draw_drag, 
-		NavitGraphics_overlay_disable, NavitGraphics_overlay_resize, NavitGraphics_SetCamera;
+		NavitGraphics_overlay_disable, NavitGraphics_overlay_resize, NavitGraphics_SetCamera,
+		NavitGraphics_setBackgroundColor;
 
 	jclass PaintClass;
 	jmethodID Paint_init,Paint_setStrokeWidth,Paint_setARGB;
@@ -66,6 +65,8 @@ struct graphics_priv {
 
 	struct callback_list *cbl;
 	struct window win;
+	struct padding *padding;
+	jint bgcolor;
 };
 
 struct graphics_font_priv {
@@ -248,9 +249,9 @@ image_new(struct graphics_priv *gra, struct graphics_image_methods *meth, char *
 	if (localBitmap) {
 		ret->width=(*jnienv)->CallIntMethod(jnienv, localBitmap, gra->Bitmap_getWidth);
 		ret->height=(*jnienv)->CallIntMethod(jnienv, localBitmap, gra->Bitmap_getHeight);
-		if((*w!=-1 && *w!=ret->width) || (*h!=-1 && *w!=ret->height)) {
+		if((*w!=IMAGE_W_H_UNSET && *w!=ret->width) || (*h!=IMAGE_W_H_UNSET && *w!=ret->height)) {
 			jclass scaledBitmap=(*jnienv)->CallStaticObjectMethod(jnienv, gra->BitmapClass, 
-				gra->Bitmap_createScaledBitmap, localBitmap, (*w==-1)?ret->width:*w, (*h==-1)?ret->height:*h, JNI_TRUE);
+				gra->Bitmap_createScaledBitmap, localBitmap, (*w==IMAGE_W_H_UNSET)?ret->width:*w, (*h==IMAGE_W_H_UNSET)?ret->height:*h, JNI_TRUE);
 			if(!scaledBitmap) {
 				dbg(lvl_error,"Bitmap scaling to %dx%d failed for %s",*w,*h,path);
 			} else {
@@ -421,9 +422,11 @@ static struct graphics_priv * overlay_new(struct graphics_priv *gr, struct graph
 static void *
 get_data(struct graphics_priv *this, const char *type)
 {
-	if (strcmp(type,"window"))
-		return NULL;
-	return &this->win;
+	if (!strcmp(type,"padding"))
+		return this->padding;
+	if (!strcmp(type,"window"))
+		return &this->win;
+	return NULL;
 }
 
 static void image_free(struct graphics_priv *gr, struct graphics_image_priv *priv)
@@ -465,10 +468,28 @@ set_attr(struct graphics_priv *gra, struct attr *attr)
 	case attr_use_camera:
 		(*jnienv)->CallVoidMethod(jnienv, gra->NavitGraphics, gra->NavitGraphics_SetCamera, attr->u.num);
 		return 1;
+	case attr_background_color:
+		gra->bgcolor = (attr->u.color->a / 0x101) << 24
+				| (attr->u.color->r / 0x101) << 16
+				| (attr->u.color->g / 0x101) << 8
+				| (attr->u.color->b / 0x101);
+		dbg(lvl_debug, "set attr_background_color %04x %04x %04x %04x (%08x)\n",
+				attr->u.color->r, attr->u.color->g, attr->u.color->b, attr->u.color->a, gra->bgcolor);
+		if (gra->NavitGraphics_setBackgroundColor != NULL)
+			(*jnienv)->CallVoidMethod(jnienv, gra->NavitGraphics, gra->NavitGraphics_setBackgroundColor, gra->bgcolor);
+		else
+			dbg(lvl_error, "NavitGraphics.setBackgroundColor not found, cannot set background color\n");
+		return 1;
 	default:
 		return 0;
 	}
 }
+
+
+int show_native_keyboard (struct graphics_keyboard *kbd);
+
+void hide_native_keyboard (struct graphics_keyboard *kbd);
+
 
 static struct graphics_methods graphics_methods = {
 	graphics_destroy,
@@ -492,13 +513,26 @@ static struct graphics_methods graphics_methods = {
 	overlay_disable,
 	overlay_resize,
 	set_attr,
+	show_native_keyboard,
+	hide_native_keyboard,
 };
 
 static void
 resize_callback(struct graphics_priv *gra, int w, int h)
 {
 	dbg(lvl_debug,"w=%d h=%d ok\n",w,h);
+	dbg(lvl_debug,"gra=%p, %d callbacks in list\n", gra, g_list_length(gra->cbl));
 	 callback_list_call_attr_2(gra->cbl, attr_resize, (void *)w, (void *)h);
+}
+
+static void
+padding_callback(struct graphics_priv *gra, int left, int top, int right, int bottom)
+{
+	dbg(lvl_debug, "win.padding left=%d top=%d right=%d bottom=%d ok\n", left, top, right, bottom);
+	gra->padding->left = left;
+	gra->padding->top = top;
+	gra->padding->right = right;
+	gra->padding->bottom = bottom;
 }
 
 static void
@@ -571,6 +605,8 @@ graphics_android_init(struct graphics_priv *ret, struct graphics_priv *parent, s
 	jmethodID cid, Context_getPackageName;
 
 	dbg(lvl_debug,"at 2 jnienv=%p\n",jnienv);
+	if (parent)
+		ret->padding = parent->padding;
 	if (!find_class_global("android/graphics/Paint", &ret->PaintClass))
 		return 0;
 	if (!find_method(ret->PaintClass, "<init>", "(I)V", &ret->Paint_init))
@@ -646,6 +682,14 @@ graphics_android_init(struct graphics_priv *ret, struct graphics_priv *parent, s
 	cb=callback_new_1(callback_cast(resize_callback), ret);
 	(*jnienv)->CallVoidMethod(jnienv, ret->NavitGraphics, cid, (int)cb);
 
+	cid = (*jnienv)->GetMethodID(jnienv, ret->NavitGraphicsClass, "setPaddingChangedCallback", "(I)V");
+	if (cid == NULL) {
+		dbg(lvl_error,"no SetPaddingCallback method found\n");
+		return 0; /* exception thrown */
+	}
+	cb=callback_new_1(callback_cast(padding_callback), ret);
+	(*jnienv)->CallVoidMethod(jnienv, ret->NavitGraphics, cid, (int)cb);
+
 	cid = (*jnienv)->GetMethodID(jnienv, ret->NavitGraphicsClass, "setButtonCallback", "(I)V");
 	if (cid == NULL) {
 		dbg(lvl_error,"no SetButtonCallback method found\n");
@@ -701,7 +745,7 @@ graphics_android_init(struct graphics_priv *ret, struct graphics_priv *parent, s
 }
 
 static jclass NavitClass;
-static jmethodID Navit_disableSuspend, Navit_exit, Navit_fullscreen, Navit_runOptionsItem, Navit_showMenu;
+static jmethodID Navit_disableSuspend, Navit_exit, Navit_fullscreen, Navit_runOptionsItem, Navit_showMenu, Navit_showNativeKeyboard, Navit_hideNativeKeyboard;
 
 static int
 graphics_android_fullscreen(struct window *win, int on)
@@ -792,6 +836,7 @@ graphics_android_new(struct navit *nav, struct graphics_methods *meth, struct at
 	struct attr *attr;
 	int use_camera=0;
 	jmethodID cid;
+	jint android_bgcolor;
 
 	dbg(lvl_debug, "enter\n");
 	if (!event_request_system("android","graphics_android"))
@@ -803,6 +848,23 @@ graphics_android_new(struct navit *nav, struct graphics_methods *meth, struct at
 	ret->win.priv=ret;
 	ret->win.fullscreen=graphics_android_fullscreen;
 	ret->win.disable_suspend=graphics_android_disable_suspend;
+	ret->padding = g_new0(struct padding, 1);
+	ret->padding->left = 0;
+	ret->padding->top = 0;
+	ret->padding->right = 0;
+	ret->padding->bottom = 0;
+	/* attr_background_color is the background color for system bars (API 17+ only) */
+	if ((attr=attr_search(attrs, NULL, attr_background_color))) {
+		ret->bgcolor = (attr->u.color->a / 0x101) << 24
+				| (attr->u.color->r / 0x101) << 16
+				| (attr->u.color->g / 0x101) << 8
+				| (attr->u.color->b / 0x101);
+		dbg(lvl_debug, "attr_background_color %04x %04x %04x %04x (%08x)\n",
+				attr->u.color->r, attr->u.color->g, attr->u.color->b, attr->u.color->a, ret->bgcolor);
+	} else {
+		/* default is the same as for OSD */
+		ret->bgcolor = 0x60000000;
+	}
 	if ((attr=attr_search(attrs, NULL, attr_use_camera))) {
 		use_camera=attr->u.num;
 	}
@@ -826,6 +888,10 @@ graphics_android_new(struct navit *nav, struct graphics_methods *meth, struct at
 			navit_object_set_attr((struct navit_object *) nav, attr);
 			dbg(lvl_debug, "attr_has_menu_button=%d\n", attr->u.num);
 			g_free(attr);
+		}
+		ret->NavitGraphics_setBackgroundColor = (*jnienv)->GetMethodID(jnienv, ret->NavitGraphicsClass, "setBackgroundColor", "(I)V");
+		if (ret->NavitGraphics_setBackgroundColor != NULL) {
+			(*jnienv)->CallVoidMethod(jnienv, ret->NavitGraphics, ret->NavitGraphics_setBackgroundColor, ret->bgcolor);
 		}
 		dbg(lvl_debug,"returning %p\n",ret);
 		return ret;
@@ -1070,6 +1136,8 @@ event_android_new(struct event_methods *meth)
 	Navit_showMenu = (*jnienv)->GetMethodID(jnienv, NavitClass, "showMenu", "()V");
 	if (Navit_showMenu == NULL)
 		return NULL;
+	Navit_showNativeKeyboard = (*jnienv)->GetMethodID(jnienv, NavitClass, "showNativeKeyboard", "()I");
+	Navit_hideNativeKeyboard = (*jnienv)->GetMethodID(jnienv, NavitClass, "hideNativeKeyboard", "()V");
 
 	dbg(lvl_debug,"ok\n");
         *meth=event_android_methods;
@@ -1077,10 +1145,59 @@ event_android_new(struct event_methods *meth)
 }
 
 
+/**
+ * @brief Displays the native input method.
+ *
+ * This method decides whether a native on-screen input method, such as a virtual keyboard, needs to be
+ * displayed. A typical case in which there is no need for an on-screen input method is if a hardware
+ * keyboard is present.
+ *
+ * Note that the Android platform lacks reliable means of determining whether an on-screen input method
+ * is going to be displayed or how much screen space it is going to occupy. Therefore this method tries
+ * to guess these values. They have been tested and found to work correctly with the AOSP keyboard, and
+ * are thus expected to be compatible with most on-screen keyboards found on the market, but results may
+ * be unexpected with other input methods.
+ *
+ * @param kbd A {@code struct graphics_keyboard} which describes the requirements for the input method
+ * and will be populated with the data of the input method before the function returns.
+ *
+ * @return True if the input method is going to be displayed, false if not.
+ */
+int show_native_keyboard (struct graphics_keyboard *kbd) {
+	kbd->w = -1;
+	if (Navit_showNativeKeyboard == NULL) {
+		dbg(lvl_error, "method Navit.showNativeKeyboard() not found, cannot display keyboard\n");
+		return 0;
+	}
+	kbd->h = (*jnienv)->CallIntMethod(jnienv, android_activity, Navit_showNativeKeyboard);
+	dbg(lvl_error, "keyboard size is %d x %d px\n", kbd->w, kbd->h);
+	dbg(lvl_error, "return\n");
+	/* zero height means we're not showing a keyboard, therefore normalize height to boolean */
+	return !!(kbd->h);
+}
+
+
+/**
+ * @brief Hides the native input method and frees associated private data.
+ *
+ * @param kbd The {@code struct graphics_keyboard} which was passed to the earlier call to
+ * {@link show_native_keyboard(struct graphics_keyboard *)}. The {@code gra_priv} member of the struct
+ * will be freed by this function.
+ */
+void hide_native_keyboard (struct graphics_keyboard *kbd) {
+	if (Navit_hideNativeKeyboard == NULL) {
+		dbg(lvl_error, "method Navit.hideNativeKeyboard() not found, cannot dismiss keyboard\n");
+		return;
+	}
+	(*jnienv)->CallVoidMethod(jnienv, android_activity, Navit_hideNativeKeyboard);
+	g_free(kbd->gra_priv);
+}
+
+
 void
 plugin_init(void)
 {
 	dbg(lvl_debug,"enter\n");
-        plugin_register_graphics_type("android", graphics_android_new);
-	plugin_register_event_type("android", event_android_new);
+        plugin_register_category_graphics("android", graphics_android_new);
+	plugin_register_category_event("android", event_android_new);
 }
