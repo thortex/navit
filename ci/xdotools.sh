@@ -64,3 +64,14 @@ done
 
 # Assemble the gif
 convert   -delay 100 -loop 0 $CIRCLE_ARTIFACTS/frames/*.png $CIRCLE_ARTIFACTS/town_search.gif
+
+# Go in the 'tools' menu
+send_event key KP_Enter
+send_event key Down
+send_event key Right
+send_event key Right
+send_event key KP_Enter
+# Display network info
+send_event key Down
+send_event key Right
+send_event key KP_Enter
